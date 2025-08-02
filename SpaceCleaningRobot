@@ -1,0 +1,481 @@
+import heapq
+from collections import deque
+import random
+import math
+import matplotlib.pyplot as plt
+import time
+
+# Graph and heuristic creation
+def create_graph(debris_locations, interference_zones, defensive_satellites):
+    graph = {}
+    for i, debris in enumerate(debris_locations):
+        node = f'D{i}'
+        graph[node] = {}
+        if i < len(debris_locations) - 1:
+            next_node = f'D{i+1}'
+            dist = math.sqrt((debris[0] - debris_locations[i+1][0])**2 +
+                           (debris[1] - debris_locations[i+1][1])**2)
+            if crosses_interference(debris, debris_locations[i+1], interference_zones) or \
+               crosses_defensive(debris, debris_locations[i+1], defensive_satellites):
+                dist *= 2
+            graph[node][next_node] = dist
+        for _ in range(min(2, len(debris_locations)-1)):
+            rand_idx = random.randint(0, len(debris_locations)-1)
+            if rand_idx != i:
+                other_node = f'D{rand_idx}'
+                dist = math.sqrt((debris[0] - debris_locations[rand_idx][0])**2 +
+                               (debris[1] - debris_locations[rand_idx][1])**2)
+                if crosses_interference(debris, debris_locations[rand_idx], interference_zones) or \
+                   crosses_defensive(debris, debris_locations[rand_idx], defensive_satellites):
+                    dist *= 2
+                graph[node][other_node] = dist
+    return graph
+
+def create_heuristic(debris_locations, target_idx):
+    target = debris_locations[target_idx]
+    return {f'D{i}': math.sqrt((pos[0] - target[0])**2 + (pos[1] - target[1])**2)
+            for i, pos in enumerate(debris_locations)}
+
+# Risk detection functions
+def crosses_interference(start, end, interference_zones):
+    for zone in interference_zones:
+        zx, zy, radius = zone
+        if point_line_distance((zx, zy), start, end) < radius:
+            return True
+    return False
+
+def crosses_defensive(start, end, defensive_satellites):
+    for sat in defensive_satellites:
+        sx, sy, radius = sat
+        if point_line_distance((sx, sy), start, end) < radius:
+            return True
+    return False
+
+def point_line_distance(point, start, end):
+    px, py = point
+    x1, y1 = start
+    x2, y2 = end
+    num = abs((y2 - y1) * px - (x2 - x1) * py + x2 * y1 - y2 * x1)
+    den = math.sqrt((y2 - y1)**2 + (x2 - x1)**2)
+    return num / den if den != 0 else float('inf')
+
+# Space risks and robot responses
+space_risks = {
+    "High-Value Debris": "Activates precise gripping mechanism to safely collect valuable components.",
+    "Solar Storm": "Shields electronics and pauses operations until storm subsides.",
+    "Interference Zone": "Adjusts communication frequency to avoid signal disruption.",
+    "Defensive Satellites": "Executes evasive maneuvers to avoid collision or detection.",
+    "Micrometeoroids": "Deploys reinforced shielding to protect critical systems.",
+    "Thermal Extremes": "Regulates internal temperature with cooling/heating systems.",
+    "Tumbling Debris": "Uses stabilization thrusters to match debris rotation and collect safely."
+}
+
+# Assign risks randomly to debris
+def assign_risks_to_debris(debris_locations, interference_zones, defensive_satellites):
+    risks_at_debris = {}
+    all_risks = list(space_risks.keys())
+    for i in range(len(debris_locations)):
+        node = f'D{i}'
+        if random.random() < 0.5:
+            risk = random.choice(all_risks)
+            risks_at_debris[node] = risk
+        if i < len(debris_locations) - 1:
+            if crosses_interference(debris_locations[i], debris_locations[i+1], interference_zones):
+                risks_at_debris[node] = "Interference Zone"
+            elif crosses_defensive(debris_locations[i], debris_locations[i+1], defensive_satellites):
+                risks_at_debris[node] = "Defensive Satellites"
+    return risks_at_debris
+
+# Fuel management
+def manage_fuel(current_fuel, distance, risk=None):
+    base_fuel_cost = distance * 2
+    if risk:
+        if risk == "High-Value Debris":
+            current_fuel += 20
+            print(f"  - Fuel increased by 20 units due to {risk}")
+        else:
+            extra_fuel_cost = base_fuel_cost * 1.5
+            current_fuel -= extra_fuel_cost
+            print(f"  - Extra fuel cost ({extra_fuel_cost:.2f} units) due to {risk}")
+    current_fuel -= base_fuel_cost
+    return current_fuel
+
+# Calculate fuel cost to reach a debris from current position
+def calculate_fuel_cost(current_pos, target_pos, risk=None):
+    distance = math.sqrt((current_pos[0] - target_pos[0])**2 + (current_pos[1] - target_pos[1])**2)
+    base_cost = distance * 2
+    if risk:
+        if risk == "High-Value Debris":
+            return base_cost - 20
+        else:
+            return base_cost + (base_cost * 1.5)
+    return base_cost
+
+# All 15 Algorithms (simplified)
+def bfs_debris_mapping(graph, start, all_nodes):
+    visited = set([start])
+    queue = deque([start])
+    path = [start]
+    while queue and len(visited) < len(all_nodes):
+        node = queue.popleft()
+        for neighbor in graph[node]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                path.append(neighbor)
+                queue.append(neighbor)
+    return path
+
+def dfs_retrieval_path(graph, start, all_nodes, path=[]):
+    path = path + [start]
+    if set(path) == set(all_nodes):
+        return path
+    for neighbor in graph[start]:
+        if neighbor not in path:
+            new_path = dfs_retrieval_path(graph, neighbor, all_nodes, path)
+            if new_path:
+                return new_path
+    return path
+
+def dls_fuel_limited(graph, start, all_nodes, depth_limit, path=[]):
+    path = path + [start]
+    if set(path) == set(all_nodes):
+        return path
+    if depth_limit <= 0:
+        return path
+    for neighbor in graph[start]:
+        if neighbor not in path:
+            new_path = dls_fuel_limited(graph, neighbor, all_nodes, depth_limit - 1, path)
+            if new_path:
+                return new_path
+    return path
+
+def ucs_least_energy(graph, start, all_nodes):
+    queue = [(0, start, [start])]
+    visited = set()
+    while queue and len(visited) < len(all_nodes):
+        (cost, node, path) = heapq.heappop(queue)
+        if node not in visited:
+            visited.add(node)
+            path = path + [node]
+            for neighbor, cost_to_neighbor in graph[node].items():
+                if neighbor not in visited:
+                    heapq.heappush(queue, (cost + cost_to_neighbor, neighbor, path))
+    return path
+
+def iddfs_incremental_cleanup(graph, start, all_nodes, max_depth):
+    for depth in range(max_depth):
+        result = dls_fuel_limited(graph, start, all_nodes, depth)
+        if set(result) == set(all_nodes):
+            return result
+    return result
+
+def bidirectional_search(graph, start, target, all_nodes):
+    def bfs_direction(start_node, target_node):
+        queue = deque([(start_node, [start_node])])
+        visited = set()
+        while queue:
+            node, path = queue.popleft()
+            if node == target_node:
+                return path
+            if node not in visited:
+                visited.add(node)
+                for neighbor in graph[node]:
+                    queue.append((neighbor, path + [neighbor]))
+        return None
+    forward_path = bfs_direction(start, target) or []
+    backward_path = bfs_direction(target, start) or []
+    combined = forward_path[:-1] + backward_path[::-1] if forward_path and backward_path else forward_path
+    return combined if set(combined) == set(all_nodes) else forward_path
+
+def gbfs_efficient_retrieval(graph, start, all_nodes, heuristic):
+    queue = [(heuristic[start], start, [start])]
+    visited = set()
+    while queue and len(visited) < len(all_nodes):
+        (_, node, path) = heapq.heappop(queue)
+        if node not in visited:
+            visited.add(node)
+            path = path + [node]
+            for neighbor in graph[node]:
+                if neighbor not in visited:
+                    heapq.heappush(queue, (heuristic[neighbor], neighbor, path + [neighbor]))
+    return path
+
+def a_star_search(graph, start, all_nodes, heuristic):
+    queue = [(heuristic[start], 0, start, [start])]
+    visited = set()
+    while queue and len(visited) < len(all_nodes):
+        (_, cost, node, path) = heapq.heappop(queue)
+        if node not in visited:
+            visited.add(node)
+            path = path + [node]
+            for neighbor, cost_to_neighbor in graph[node].items():
+                if neighbor not in visited:
+                    g_score = cost + cost_to_neighbor
+                    f_score = g_score + heuristic[neighbor]
+                    heapq.heappush(queue, (f_score, g_score, neighbor, path + [neighbor]))
+    return path
+
+def rbfs_adaptive_path(graph, node, all_nodes, heuristic, f_limit, path=[]):
+    path = path + [node]
+    if set(path) == set(all_nodes):
+        return path, 0
+    successors = [(heuristic[n], n) for n in graph[node] if n not in path]
+    if not successors:
+        return path, float('inf')
+    while True:
+        successors.sort()
+        best = successors[0]
+        if best[0] > f_limit:
+            return path, best[0]
+        alternative = successors[1][0] if len(successors) > 1 else float('inf')
+        result, best_f = rbfs_adaptive_path(graph, best[1], all_nodes, heuristic, min(f_limit, alternative), path)
+        if set(result) == set(all_nodes):
+            return result, best_f
+        successors[0] = (best_f, best[1])
+        path = result
+
+def hill_climbing_cluster_cleanup(graph, start, all_nodes, heuristic):
+    current = start
+    path = [current]
+    visited = {current}
+    while len(visited) < len(all_nodes):
+        neighbors = [n for n in graph[current] if n not in visited]
+        if not neighbors:
+            break
+        next_node = min(neighbors, key=lambda x: heuristic[x])
+        current = next_node
+        path.append(current)
+        visited.add(current)
+    return path
+
+def simulated_annealing_collision_avoidance(graph, start, all_nodes, heuristic, temp, cooling_rate):
+    current = start
+    path = [current]
+    visited = {current}
+    while len(visited) < len(all_nodes):
+        neighbors = [n for n in graph[current] if n not in visited]
+        if not neighbors:
+            break
+        next_node = random.choice(neighbors)
+        delta_e = heuristic[next_node] - heuristic[current]
+        if delta_e < 0 or random.random() < math.exp(-delta_e / temp):
+            current = next_node
+            path.append(current)
+            visited.add(current)
+        temp *= cooling_rate
+    return path
+
+def genetic_algorithm_multi_orbital_cleanup(graph, all_nodes, generations):
+    population = [random.sample(all_nodes, len(all_nodes)) for _ in range(10)]
+    fitness_fn = lambda path: -sum(math.sqrt((debris_locations[int(path[i][1:])][0] - debris_locations[int(path[i+1][1:])][0])**2 +
+                                           (debris_locations[int(path[i][1:])][1] - debris_locations[int(path[i+1][1:])][1])**2)
+                                 for i in range(len(path)-1) if path[i] in graph and path[i+1] in graph.get(path[i], {}))
+    for _ in range(generations):
+        population = sorted(population, key=fitness_fn, reverse=True)
+        next_gen = population[:2]
+        for _ in range(8):
+            parent1, parent2 = random.choices(population[:5], k=2)
+            child = parent1[:len(parent1)//2] + [n for n in parent2[len(parent2)//2:] if n not in parent1[:len(parent1)//2]]
+            next_gen.append(child)
+        population = next_gen
+    return population[0]
+
+def minimax_debris_defense(graph, node, all_nodes, depth, heuristic, is_maximizing):
+    if depth == 0 or set([node]) == set(all_nodes):
+        return [node]
+    if is_maximizing:
+        best_path = [node]
+        for neighbor in graph[node]:
+            path = minimax_debris_defense(graph, neighbor, all_nodes, depth - 1, heuristic, False)
+            if len(path) > len(best_path):
+                best_path = [node] + path
+        return best_path
+    else:
+        worst_path = [node]
+        for neighbor in graph[node]:
+            path = minimax_debris_defense(graph, neighbor, all_nodes, depth - 1, heuristic, True)
+            if len(path) < len(worst_path) or not worst_path[1:]:
+                worst_path = [node] + path
+        return worst_path
+
+def csp_resource_allocation(graph, all_nodes):
+    variables = all_nodes
+    domains = {node: list(graph[node].keys()) for node in all_nodes}
+    constraints = [lambda var, val: val in graph[var]]
+    def backtrack(assignment, remaining):
+        if not remaining:
+            return assignment
+        var = remaining[0]
+        for value in domains[var]:
+            if all(constraint(var, value) for constraint in constraints):
+                assignment.append(value)
+                result = backtrack(assignment, remaining[1:])
+                if result:
+                    return result
+                assignment.pop()
+        return None
+    path = backtrack([variables[0]], variables[1:])
+    return path if path else [variables[0]]
+
+def first_order_logic_safety_rules(graph, all_nodes):
+    safe_path = [all_nodes[0]]
+    for node in all_nodes[1:]:
+        if all(n in graph[node] or node == n for n in safe_path):
+            safe_path.append(node)
+    return safe_path
+
+# Combine paths, prioritizing lowest cost debris
+def combine_paths(paths, all_nodes, debris_locations, risks_at_debris):
+    final_path = ['D0']
+    unvisited = set(all_nodes) - {'D0'}
+    current_pos = debris_locations[0]
+
+    while unvisited:
+        costs = {}
+        for node in unvisited:
+            target_pos = debris_locations[int(node[1:])]
+            risk = risks_at_debris.get(node)
+            costs[node] = calculate_fuel_cost(current_pos, target_pos, risk)
+
+        next_node = min(costs, key=costs.get)
+        final_path.append(next_node)
+        unvisited.remove(next_node)
+        current_pos = debris_locations[int(next_node[1:])]
+
+    return final_path
+
+# Simulation with fuel management
+def simulate_collection(debris_locations, final_path, risks_at_debris, initial_fuel):
+    print("\nSimulation of Robot Collecting Debris:")
+    current_fuel = initial_fuel
+    for i, node in enumerate(final_path):
+        x, y = debris_locations[int(node[1:])]
+        print(f"Step {i+1}: Moving to {node} at ({x}, {y})")
+
+        if i < len(final_path) - 1:
+            next_x, next_y = debris_locations[int(final_path[i+1][1:])]
+            distance = math.sqrt((x - next_x)**2 + (y - next_y)**2)
+            risk = risks_at_debris.get(node)
+
+            current_fuel = manage_fuel(current_fuel, distance, risk)
+            print(f"  - Fuel consumed for movement: {distance * 2:.2f} units")
+            print(f"  - Remaining fuel: {current_fuel:.2f} units")
+
+            if current_fuel <= 0:
+                print("  - Warning: Fuel depleted! Mission aborted.")
+                break
+
+            if node in risks_at_debris:
+                print(f"  - Risk at {node}: {risk} - {space_risks[risk]}")
+                if risk == "Solar Storm":
+                    time.sleep(1)
+
+        time.sleep(0.5)
+    return current_fuel
+
+# Visualization with arrows
+def visualize_results(debris_locations, final_path, interference_zones, defensive_satellites, risks_at_debris):
+    plt.figure(figsize=(12, 8))
+    for i, (x, y) in enumerate(debris_locations):
+        color = 'red' if f'D{i}' not in risks_at_debris else 'purple'
+        plt.scatter(x, y, color=color, s=100)
+        plt.text(x + 0.1, y + 0.1, f'D{i}', fontsize=12)
+
+    # Plot path with arrows
+    for i in range(len(final_path) - 1):
+        node1 = final_path[i]
+        node2 = final_path[i + 1]
+        x1, y1 = debris_locations[int(node1[1:])]
+        x2, y2 = debris_locations[int(node2[1:])]
+        plt.arrow(x1, y1, x2 - x1, y2 - y1, color='blue', width=0.05, head_width=0.2,
+                  length_includes_head=True, label='Robot Path' if i == 0 else None)
+
+    for zx, zy, radius in interference_zones:
+        circle = plt.Circle((zx, zy), radius, color='yellow', alpha=0.3, label='Interference Zone' if zx == interference_zones[0][0] else None)
+        plt.gca().add_patch(circle)
+
+    for sx, sy, radius in defensive_satellites:
+        circle = plt.Circle((sx, sy), radius, color='green', alpha=0.3, label='Defensive Satellite' if sx == defensive_satellites[0][0] else None)
+        plt.gca().add_patch(circle)
+
+    plt.title("Final Debris Collection Path with Risks (Lowest Cost First)")
+    plt.xlabel("X Coordinate")
+    plt.ylabel("Y Coordinate")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# Main function
+def main():
+    global debris_locations
+    while True:
+        try:
+            initial_fuel = float(input("Enter initial fuel amount (units): "))
+            if initial_fuel <= 0:
+                print("Fuel amount must be positive.")
+                continue
+            break
+        except ValueError:
+            print("Please enter a valid number for fuel.")
+
+    print("Enter debris locations as x,y coordinates (e.g., '1,2'). Press Enter twice to finish:")
+    debris_locations = []
+    while True:
+        coords = input("Debris location: ").strip()
+        if not coords:
+            break
+        try:
+            x, y = map(float, coords.split(','))
+            debris_locations.append((x, y))
+        except ValueError:
+            print("Invalid format. Please use 'x,y' format.")
+            continue
+
+    if len(debris_locations) < 2:
+        print("Please enter at least 2 debris locations.")
+        return
+
+    interference_zones = [(2.5, 3.5, 1.0)]
+    defensive_satellites = [(4.0, 2.5, 0.8)]
+
+    graph = create_graph(debris_locations, interference_zones, defensive_satellites)
+    heuristic = create_heuristic(debris_locations, len(debris_locations)-1)
+    all_nodes = [f'D{i}' for i in range(len(debris_locations))]
+    start, target = 'D0', f'D{len(debris_locations)-1}'
+
+    risks_at_debris = assign_risks_to_debris(debris_locations, interference_zones, defensive_satellites)
+
+    paths = [
+        bfs_debris_mapping(graph, start, all_nodes),
+        dfs_retrieval_path(graph, start, all_nodes),
+        dls_fuel_limited(graph, start, all_nodes, 3),
+        ucs_least_energy(graph, start, all_nodes),
+        iddfs_incremental_cleanup(graph, start, all_nodes, len(debris_locations)),
+        bidirectional_search(graph, start, target, all_nodes),
+        gbfs_efficient_retrieval(graph, start, all_nodes, heuristic),
+        a_star_search(graph, start, all_nodes, heuristic),
+        rbfs_adaptive_path(graph, start, all_nodes, heuristic, float('inf'))[0],
+        hill_climbing_cluster_cleanup(graph, start, all_nodes, heuristic),
+        simulated_annealing_collision_avoidance(graph, start, all_nodes, heuristic, 100, 0.99),
+        genetic_algorithm_multi_orbital_cleanup(graph, all_nodes, 10),
+        minimax_debris_defense(graph, start, all_nodes, 3, heuristic, True),
+        csp_resource_allocation(graph, all_nodes),
+        first_order_logic_safety_rules(graph, all_nodes)
+    ]
+
+    final_path = combine_paths(paths, all_nodes, debris_locations, risks_at_debris)
+
+    print("\nFinal Debris Collection Path (Lowest Cost First):")
+    print(final_path)
+
+    print("\nSpace Risks and Robot Responses at Specific Debris:")
+    for node, risk in risks_at_debris.items():
+        print(f"- {node}: {risk} - {space_risks[risk]}")
+
+    final_fuel = simulate_collection(debris_locations, final_path, risks_at_debris, initial_fuel)
+    print(f"\nMission completed with {final_fuel:.2f} units of fuel remaining.")
+
+    visualize_results(debris_locations, final_path, interference_zones, defensive_satellites, risks_at_debris)
+
+if __name__ == "__main__":
+    main()
